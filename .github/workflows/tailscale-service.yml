@@ -1,0 +1,36 @@
+name: tailscale-service
+on:
+  workflow_dispatch:
+
+jobs:
+  service-test:
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: Run system container with `podman`
+        run: |
+          podman run -d --name service \
+            --cap-add=NET_ADMIN --cap-add=NET_RAW --device=/dev/net/tun --device=/dev/fuse \
+            ghcr.io/gbraad-apps/onion:latest
+      - name: Tailscale setup (root)
+        run: |
+          until podman exec service tailscale up --auth-key ${TAILSCALE_AUTHKEY} --hostname github-${HOSTNAME}
+          do
+              sleep 0.1
+          done
+          podman exec service tailscale set --ssh
+          podman exec service chmod 640 /etc/shadow
+          podman exec service systemctl disable --now kasmvncserver
+          podman exec service systemctl enable --now tor
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY}}
+      - name: Hang around
+        run: |
+          until podman exec service systemctl is-active tor
+          do
+               sleep 1
+          done
+          podman exec service tailscale serve --bg --tcp 9050 9050
+          IP=`podman exec service tailscale ip -4`
+          echo "Execute the following: export http_proxy=socks5://${IP}:9050; export https_proxy=socks5://${IP}:9050"
+          sleep infinity
